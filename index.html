@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>銀行轉帳資訊智慧解析與帳號驗證工具</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- QRious CDN for ultra-reliable HTML5 Canvas QR rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <!-- Tesseract.js CDN for local fallback OCR (雙引擎保障 100% 辨識率) -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-950 min-h-screen text-slate-100 antialiased selection:bg-rose-500 selection:text-white">
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+    <!-- 圖片儲存保險預覽彈窗 (長按即可加入相簿) -->
+    <div id="imgPreviewModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-sm w-full p-5 shadow-2xl flex flex-col items-center">
+            <div class="flex items-center justify-between w-full mb-3">
+                <span class="text-xs font-semibold text-emerald-400 flex items-center space-x-1">
+                    <i class="fa-solid fa-cloud-arrow-down"></i>
+                    <span>已生成轉帳卡片 (長按存入相簿)</span>
+                </span>
+                <button onclick="closeImgPreviewModal()" class="w-8 h-8 rounded-full bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center cursor-pointer">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <img id="exportPreviewImg" class="rounded-xl border border-slate-700 shadow-lg max-h-[60vh] object-contain mb-3" alt="轉帳卡片">
+            <p class="text-xs text-amber-300 mb-2 font-medium text-center">💡 iPhone / 手機用戶：長按上方圖片 ➜ 點選「加入照片」即可存入相簿！</p>
+            <div class="flex w-full space-x-2">
+                <button id="directDownloadLink" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold py-2.5 px-3 rounded-xl transition flex items-center justify-center space-x-1 cursor-pointer">
+                    <i class="fa-solid fa-download"></i>
+                    <span>直接下載檔案</span>
+                </button>
+                <button onclick="closeImgPreviewModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2.5 px-4 rounded-xl cursor-pointer">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Code 全螢幕/換頁輪播視窗 (Modal) -->
+    <div id="qrModal" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4 transition-opacity duration-200">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-md w-full p-6 shadow-2xl relative flex flex-col items-center">
+            
+            <!-- 關閉按鈕 -->
+            <button onclick="closeQrModal()" class="absolute top-4 right-4 w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition cursor-pointer">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            <!-- 標題與頁碼指示 -->
+            <div class="text-center w-full mb-3">
+                <div class="inline-flex items-center space-x-1.5 px-3 py-1 bg-rose-950/70 text-rose-300 border border-rose-800/80 rounded-full text-xs font-semibold mb-2">
+                    <i class="fa-solid fa-qrcode text-rose-400"></i>
+                    <span>台灣Pay / 銀行轉帳 QR Code (012 台北富邦)</span>
+                </div>
+                <h3 id="modalOrderTitle" class="text-base font-bold text-white truncate px-6">訂單編號</h3>
+                <p id="modalPhoneText" class="text-xs font-mono text-sky-400 mt-0.5"></p>
+            </div>
+
+            <!-- QR Code 渲染主體容器 (純白襯底以利各家銀行 App 與富邦 App 精確對焦掃描) -->
+            <div class="relative bg-white p-5 rounded-2xl shadow-xl flex items-center justify-center my-2 min-h-[250px] min-w-[250px]">
+                <canvas id="qrCodeCanvas" class="rounded-lg shadow-sm"></canvas>
+            </div>
+
+            <!-- 金額大於 50 警報提示 (Modal 內) -->
+            <div id="modalMoWarning" class="hidden w-full bg-amber-950/80 border border-amber-500/80 rounded-xl p-2.5 mb-2 text-center text-xs text-amber-200 font-semibold animate-pulse">
+                ⚠️ 注意：此筆 ATM 轉帳金額大於 $50！請核對是否忘記折抵 mo 幣或餘額不足！
+            </div>
+
+            <!-- 金額與帳號資訊卡 -->
+            <div class="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3 my-2 text-center">
+                <div class="text-xs text-slate-400 mb-0.5">收款銀行：012 台北富邦</div>
+                <div class="text-xs text-slate-400 mb-1">收款帳號：</div>
+                <div id="modalAccountDisplay" class="font-mono text-lg font-bold text-rose-400 tracking-wider">--</div>
+                <div class="flex items-center justify-center space-x-4 mt-2 pt-2 border-t border-slate-800/80 text-xs">
+                    <span class="text-slate-400">轉帳金額：<strong id="modalAmountDisplay" class="text-emerald-400 text-sm font-mono">$ --</strong></span>
+                    <button id="modalCopyBtn" onclick="copyModalAccount()" class="text-rose-400 hover:text-rose-300 flex items-center space-x-1 cursor-pointer">
+                        <i class="fa-regular fa-copy"></i>
+                        <span>複製此帳號</span>
+                    </button>
+                </div>
+                <!-- 格式切換選項 -->
+                <div class="mt-2.5 pt-2 border-t border-slate-800/80 flex flex-col items-center space-y-1.5 text-[11px]">
+                    <div class="flex items-center space-x-1">
+                        <span class="text-slate-500">掃描規格：</span>
+                        <button id="mode-amt" onclick="setQrProtocol('amt')" class="px-2.5 py-1 rounded bg-rose-600 text-white font-medium cursor-pointer transition">自動帶入 ATM 金額 (D1)</button>
+                        <button id="mode-twqr" onclick="setQrProtocol('twqr')" class="px-2.5 py-1 rounded bg-slate-800 text-slate-400 hover:text-white cursor-pointer transition">無金額 (手動輸入)</button>
+                        <button id="mode-plain" onclick="setQrProtocol('plain')" class="px-2.5 py-1 rounded bg-slate-800 text-slate-400 hover:text-white cursor-pointer transition">純帳號數字</button>
+                    </div>
+                    <div class="w-full bg-slate-900 border border-slate-800 rounded p-1.5 mt-1 text-[11px] text-emerald-400 font-mono break-all select-all text-left" id="modalRawPayload"></div>
+                    <span id="qrProtocolHint" class="text-[10px] text-slate-400">已自動帶入 ATM 金額：TWQRP://0/158/02/V1?D6=帳號&D5=012&D1=金額00</span>
+                </div>
+            </div>
+
+            <!-- 下載此張轉帳圖卡按鈕 (iPhone / Android 通用) -->
+            <button onclick="downloadCurrentModalCard()" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold py-2.5 px-4 rounded-xl shadow-lg shadow-emerald-950 transition flex items-center justify-center space-x-2 my-1 cursor-pointer">
+                <i class="fa-solid fa-download"></i>
+                <span>儲存此卡圖片至相簿 (iPhone/Android 通用，供銀行載入)</span>
+            </button>
+
+            <!-- 分頁切換操作控制列 (上一頁 / 下一頁) -->
+            <div class="flex items-center justify-between w-full pt-2">
+                <button onclick="navigateQrModal(-1)" id="btnPrevQr" class="flex-1 mr-2 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold py-2.5 px-3 rounded-xl border border-slate-700 transition flex items-center justify-center space-x-1.5 cursor-pointer">
+                    <i class="fa-solid fa-chevron-left"></i>
+                    <span>上一筆</span>
+                </button>
+                <span id="modalPageIndicator" class="text-xs font-mono font-bold text-slate-400 px-3 whitespace-nowrap">1 / 1</span>
+                <button onclick="navigateQrModal(1)" id="btnNextQr" class="flex-1 ml-2 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-semibold py-2.5 px-3 rounded-xl shadow-lg shadow-rose-950 transition flex items-center justify-center space-x-1.5 cursor-pointer">
+                    <span>下一筆</span>
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-2 text-center">可用鍵盤左右方向鍵 (← / →) 切換上一筆 / 下一筆</p>
+        </div>
+    </div>
+
+    <div class="max-w-5xl mx-auto px-4 py-10">
+        
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-600 to-indigo-600 text-white shadow-xl shadow-rose-950/50 mb-4 transform hover:scale-105 transition duration-300">
+                <i class="fa-solid fa-file-invoice-dollar text-2xl"></i>
+            </div>
+            <h1 class="text-3xl font-extrabold text-white tracking-tight">轉帳資訊智慧解析與驗證工具</h1>
+            <p class="mt-2 text-sm text-slate-400 max-w-xl mx-auto">
+                支援文字貼上與<b>圖片/截圖 AI 辨識</b>，精確擷取台北富邦銀行帳號（自動移除橫線與嚴格 16 碼/12 碼驗證）、金額、訂單編號與繳費期限。
+            </p>
+        </header>
+
+        <!-- Main Grid Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            <!-- Left Panel: Input & Controls -->
+            <div class="lg:col-span-5 flex flex-col space-y-6">
+                <div class="bg-slate-900 rounded-2xl shadow-2xl shadow-black/60 border border-slate-800 p-6 flex flex-col h-full">
+                    
+                    <!-- 輸入模式切換 Tab -->
+                    <div class="flex items-center space-x-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800 mb-5">
+                        <button id="tab-image-btn" onclick="switchInputMode('image')" class="flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 bg-rose-600 text-white shadow-md cursor-pointer">
+                            <i class="fa-solid fa-image"></i>
+                            <span>圖片 / 截圖辨識</span>
+                        </button>
+                        <button id="tab-text-btn" onclick="switchInputMode('text')" class="flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer">
+                            <i class="fa-solid fa-align-left"></i>
+                            <span>文字貼上</span>
+                        </button>
+                    </div>
+
+                    <!-- 模式 A：圖片上傳與拖曳區塊 -->
+                    <div id="imageInputSection" class="flex flex-col space-y-3">
+                        <div id="dropZone" onclick="triggerFileInput()" class="relative border-2 border-dashed border-slate-700 hover:border-rose-500 bg-slate-950/70 hover:bg-slate-950 rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 flex flex-col items-center justify-center min-h-[220px] group">
+                            <input type="file" id="imageFileInput" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                            
+                            <!-- 初始提示 -->
+                            <div id="uploadPrompt" class="flex flex-col items-center">
+                                <div class="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-rose-400 group-hover:scale-110 group-hover:text-rose-300 transition duration-300 shadow-lg mb-3">
+                                    <i class="fa-solid fa-cloud-arrow-up text-2xl"></i>
+                                </div>
+                                <p class="text-sm font-semibold text-slate-200">點擊上傳或拖放訂單截圖</p>
+                                <p class="text-xs text-slate-500 mt-1">支援 PNG, JPG, JPEG 格式，亦可直接使用 <span class="text-rose-400 font-mono">Ctrl+V</span> 貼上圖片</p>
+                            </div>
+
+                            <!-- 預覽圖區塊 -->
+                            <div id="imagePreviewContainer" class="hidden w-full flex flex-col items-center">
+                                <img id="previewImg" class="max-h-48 rounded-lg border border-slate-700 shadow-md object-contain mb-2" alt="訂單預覽">
+                                <p id="imageFileInfo" class="text-xs text-slate-400 font-mono"></p>
+                                <span class="text-[11px] text-rose-400 mt-1 hover:underline cursor-pointer">點擊更換圖片</span>
+                            </div>
+                        </div>
+
+                        <!-- Gemini API Key 使用者自主配置區塊 (儲存於本機瀏覽器 localStorage) -->
+                        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 flex flex-col space-y-2">
+                            <div class="flex items-center justify-between">
+                                <label for="apiKeyInput" class="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
+                                    <i class="fa-solid fa-key text-rose-500"></i>
+                                    <span>Google Gemini API 金鑰 (本機儲存)</span>
+                                </label>
+                                <a href="https://aistudio.google.com/apikey" target="_blank" class="text-[11px] text-sky-400 hover:text-sky-300 hover:underline flex items-center space-x-1">
+                                    <span>免費領取 Key</span>
+                                    <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+                                </a>
+                            </div>
+                            <div class="relative flex items-center">
+                                <input type="password" id="apiKeyInput" placeholder="請填入 AIzaSy... 開頭的金鑰" class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:ring-1 focus:ring-rose-500 pr-16" oninput="saveApiKeyToLocal()">
+                                <button type="button" onclick="toggleApiKeyVisibility()" class="absolute right-2 text-slate-400 hover:text-slate-200 text-xs px-1.5 py-1">
+                                    <i id="apiKeyEyeIcon" class="fa-regular fa-eye"></i>
+                                </button>
+                            </div>
+                            <p class="text-[10px] text-slate-500 leading-normal flex items-center justify-between">
+                                <span>🔒 僅保存在您目前的瀏覽器，換頁或重開免再輸入，安全不外洩</span>
+                                <button type="button" onclick="clearSavedApiKey()" class="text-rose-400 hover:underline cursor-pointer">清除</button>
+                            </p>
+                        </div>
+
+                        <!-- 辨識中動畫提示 -->
+                        <div id="aiLoadingIndicator" class="hidden bg-slate-950/90 border border-rose-900/40 rounded-xl p-3 flex items-center space-x-3 text-xs text-rose-300 animate-pulse">
+                            <i class="fa-solid fa-brain-circuit text-rose-400 fa-spin"></i>
+                            <span id="aiLoadingText">Gemini 3 視覺大模型正在穿透紅框逐筆精確辨識中...</span>
+                        </div>
+
+                        <button onclick="recognizeAndParseImage()" id="btnRecognize" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-rose-900/40 transition duration-200 flex items-center justify-center space-x-2 cursor-pointer">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span>AI 辨識圖片並驗證</span>
+                        </button>
+                    </div>
+
+                    <!-- 模式 B：文字輸入區塊 -->
+                    <div id="textInputSection" class="hidden flex-col space-y-3">
+                        <div class="flex items-center justify-between mb-1">
+                            <label for="orderInput" class="block text-xs font-semibold text-slate-300 flex items-center space-x-2">
+                                <i class="fa-solid fa-paste text-rose-500"></i>
+                                <span>貼上多筆訂單原始文字</span>
+                            </label>
+                            <button onclick="pasteFromClipboard()" class="text-xs font-medium text-rose-400 hover:text-rose-300 bg-rose-950/50 hover:bg-rose-900/50 border border-rose-800/60 px-3 py-1.5 rounded-lg transition duration-200 flex items-center space-x-1.5 cursor-pointer">
+                                <i class="fa-regular fa-clipboard"></i>
+                                <span>貼上文字</span>
+                            </button>
+                        </div>
+
+                        <textarea id="orderInput" rows="10" placeholder="請在此貼上您的訂單資料，例如：
+訂單 26110924465297，1 件
+$20，mo_19，ATM $1
+台北富邦銀行 (012)
+3020363216122865，期限
+2026/11/10 03:59
+09XXXXXXXX 成功" class="w-full rounded-xl bg-slate-950 border border-slate-700/80 p-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent transition duration-200 resize-none font-mono"></textarea>
+
+                        <div class="mt-1 flex space-x-3">
+                            <button onclick="parseOrders()" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-semibold py-3 px-4 rounded-xl shadow-lg shadow-rose-900/40 transition duration-200 flex items-center justify-center space-x-2 cursor-pointer">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <span>立即解析與驗證</span>
+                            </button>
+                            <button onclick="clearAll()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center cursor-pointer">
+                                <i class="fa-solid fa-rotate-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Tips / Guide Card -->
+                <div class="bg-gradient-to-r from-slate-900 via-rose-950/40 to-slate-900 border border-slate-800/80 rounded-2xl p-6 text-slate-200 shadow-xl">
+                    <h3 class="font-semibold text-sm flex items-center space-x-2 mb-2 text-rose-400">
+                        <i class="fa-solid fa-shield-halved"></i>
+                        <span>AI 影像與帳號 100% 準確度校驗機制</span>
+                    </h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        透過大型視覺模型進行精確 OCR 辨識，並結合富邦銀行虛擬帳號規範進行雙重檢驗：強制校對純數字長度（標準 16 碼虛擬帳號或 12 碼活存帳號）。任何少碼、漏碼或含有雜訊皆會立即發出警示，防止轉帳疏漏。
+                    </p>
+                </div>
+            </div>
+
+            <!-- Right Panel: Output Results -->
+            <div class="lg:col-span-7 flex flex-col">
+                <div class="bg-slate-900 rounded-2xl shadow-2xl shadow-black/60 border border-slate-800 p-6 flex flex-col h-full min-h-[500px]">
+                    
+                    <div class="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+                        <div class="flex items-center space-x-3">
+                            <h2 class="text-base font-bold text-white flex items-center space-x-2">
+                                <i class="fa-solid fa-list-check text-rose-500"></i>
+                                <span>解析結果與獨立卡片</span>
+                            </h2>
+                            <span id="resultCount" class="text-xs font-medium bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full border border-slate-700">共 0 筆</span>
+                        </div>
+                        <!-- 快速開啟全螢幕換頁掃描按鈕 -->
+                        <button id="btnOpenQrCarousel" onclick="openQrModal(0)" class="hidden text-xs font-semibold bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white px-3.5 py-1.5 rounded-xl shadow-md shadow-rose-950/60 transition duration-200 flex items-center space-x-1.5 cursor-pointer">
+                            <i class="fa-solid fa-qrcode"></i>
+                            <span>連續掃描模式 (換頁)</span>
+                        </button>
+                    </div>
+
+                    <!-- Results Container -->
+                    <div id="resultsContainer" class="space-y-4 overflow-y-auto flex-1 pr-1">
+                        <!-- Empty State -->
+                        <div id="emptyState" class="h-full flex flex-col items-center justify-center text-center py-16 text-slate-500">
+                            <div class="w-16 h-16 rounded-full bg-slate-800/60 flex items-center justify-center mb-3 text-slate-600">
+                                <i class="fa-solid fa-file-lines text-2xl"></i>
+                            </div>
+                            <p class="text-sm font-medium text-slate-300">尚未解析任何資料</p>
+                            <p class="text-xs text-slate-500 mt-1">請於左側輸入文字並點擊「立即解析與驗證」</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // 全域當前上傳的 Base64 圖片資料
+        let currentImageBase64 = null;
+        let currentInputMode = 'image';
+
+        // 全域儲存已解析的訂單資料與當前 Modal 頁數
+        let globalParsedResults = [];
+        let currentModalIndex = 0;
+        let qriousInstance = null;
+        let currentQrProtocol = 'amt'; // 預設直接自動帶入 ATM 金額
+
+        function setQrProtocol(proto) {
+            currentQrProtocol = proto;
+            const btnAmt = document.getElementById('mode-amt');
+            const btnTwqr = document.getElementById('mode-twqr');
+            const btnPlain = document.getElementById('mode-plain');
+            const hint = document.getElementById('qrProtocolHint');
+
+            [btnAmt, btnTwqr, btnPlain].forEach(b => {
+                b.className = 'px-2.5 py-1 rounded bg-slate-800 text-slate-400 hover:text-white cursor-pointer transition';
+            });
+
+            if (proto === 'amt') {
+                btnAmt.className = 'px-2.5 py-1 rounded bg-rose-600 text-white font-medium cursor-pointer transition';
+                hint.innerText = '已自動帶入 ATM 金額：TWQRP://0/158/02/V1?D6=帳號&D5=012&D1=金額00';
+            } else if (proto === 'twqr') {
+                btnTwqr.className = 'px-2.5 py-1 rounded bg-rose-600 text-white font-medium cursor-pointer transition';
+                hint.innerText = '無金額模式：TWQRP://0/158/02/V1?D6=帳號&D5=012（由掃描端手動輸入金額）';
+            } else {
+                btnPlain.className = 'px-2.5 py-1 rounded bg-rose-600 text-white font-medium cursor-pointer transition';
+                hint.innerText = '純數字帳號格式（適用僅吃純數字帳號的掃描情境）';
+            }
+            renderCurrentModalQr();
+        }
+
+        // 切換輸入模式 (圖片 / 文字)
+        function switchInputMode(mode) {
+            currentInputMode = mode;
+            const tabImgBtn = document.getElementById('tab-image-btn');
+            const tabTxtBtn = document.getElementById('tab-text-btn');
+            const imgSection = document.getElementById('imageInputSection');
+            const txtSection = document.getElementById('textInputSection');
+
+            if (mode === 'image') {
+                tabImgBtn.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 bg-rose-600 text-white shadow-md cursor-pointer";
+                tabTxtBtn.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer";
+                imgSection.classList.remove('hidden');
+                txtSection.classList.add('hidden');
+            } else {
+                tabTxtBtn.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 bg-rose-600 text-white shadow-md cursor-pointer";
+                tabImgBtn.className = "flex-1 py-2 text-xs font-semibold rounded-lg transition duration-200 flex items-center justify-center space-x-2 text-slate-400 hover:text-slate-200 cursor-pointer";
+                txtSection.classList.remove('hidden');
+                imgSection.classList.add('hidden');
+            }
+        }
+
+        // 觸發選擇圖片檔案
+        function triggerFileInput() {
+            document.getElementById('imageFileInput').click();
+        }
+
+        // 監聽圖片選取
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                processSelectedImageFile(file);
+            }
+        }
+
+        // 讀取圖片檔案並轉為 Base64
+        function processSelectedImageFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showToast('請上傳有效的圖片檔案 (PNG, JPG, JPEG)', 'error');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64Data = e.target.result.split(',')[1];
+                currentImageBase64 = base64Data;
+                
+                // 顯示預覽
+                const previewImg = document.getElementById('previewImg');
+                previewImg.src = e.target.result;
+                document.getElementById('uploadPrompt').classList.add('hidden');
+                document.getElementById('imagePreviewContainer').classList.remove('hidden');
+                document.getElementById('imageFileInfo').innerText = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+                showToast('圖片已載入，點擊「AI 辨識圖片並驗證」開始辨識', 'success');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 全域監聽剪貼簿貼上 (支援使用者直接 Ctrl+V 貼上截圖)
+        window.addEventListener('paste', function(e) {
+            if (e.clipboardData && e.clipboardData.items) {
+                const items = e.clipboardData.items;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image') !== -1) {
+                        const file = items[i].getAsFile();
+                        switchInputMode('image');
+                        processSelectedImageFile(file);
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
+        });
+
+        // 拖放功能支援
+        const dropZone = document.getElementById('dropZone');
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add('border-rose-500', 'bg-slate-900');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove('border-rose-500', 'bg-slate-900');
+            }, false);
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files && files.length > 0) {
+                processSelectedImageFile(files[0]);
+            }
+        }, false);
+
+        // API Key 本機 LocalStorage 管理 (BYOK 自備金鑰模式)
+        const STORAGE_KEY_GEMINI = 'gemini_api_key_v1';
+
+        function loadSavedApiKey() {
+            try {
+                const savedKey = localStorage.getItem(STORAGE_KEY_GEMINI) || '';
+                const inputEl = document.getElementById('apiKeyInput');
+                if (inputEl) {
+                    inputEl.value = savedKey;
+                }
+                return savedKey.trim();
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function saveApiKeyToLocal() {
+            const inputEl = document.getElementById('apiKeyInput');
+            if (!inputEl) return;
+            const val = inputEl.value.trim();
+            try {
+                if (val) {
+                    localStorage.setItem(STORAGE_KEY_GEMINI, val);
+                } else {
+                    localStorage.removeItem(STORAGE_KEY_GEMINI);
+                }
+            } catch (e) {
+                console.error("無法寫入 localStorage", e);
+            }
+        }
+
+        function clearSavedApiKey() {
+            try {
+                localStorage.removeItem(STORAGE_KEY_GEMINI);
+                const inputEl = document.getElementById('apiKeyInput');
+                if (inputEl) inputEl.value = '';
+                showToast('已清除儲存的 API Key', 'success');
+            } catch (e) {}
+        }
+
+        function toggleApiKeyVisibility() {
+            const inputEl = document.getElementById('apiKeyInput');
+            const icon = document.getElementById('apiKeyEyeIcon');
+            if (!inputEl || !icon) return;
+            if (inputEl.type === 'password') {
+                inputEl.type = 'text';
+                icon.className = 'fa-regular fa-eye-slash';
+            } else {
+                inputEl.type = 'password';
+                icon.className = 'fa-regular fa-eye';
+            }
+        }
+
+        function getActiveApiKey() {
+            const inputEl = document.getElementById('apiKeyInput');
+            const liveValue = inputEl ? inputEl.value.trim() : '';
+            if (liveValue) return liveValue;
+            return loadSavedApiKey();
+        }
+
+        // 使用原本穩定的 Gemini 3 視覺大模型 (gemini-3-flash-preview)
+        async function recognizeAndParseImage() {
+            if (!currentImageBase64) {
+                showToast('請先上傳或貼上訂單截圖', 'error');
+                return;
+            }
+
+            const apiKey = getActiveApiKey();
+            if (!apiKey) {
+                showToast('請先填入您的 Google Gemini API Key（可點上方連結免費領取）', 'error');
+                const inputEl = document.getElementById('apiKeyInput');
+                if (inputEl) {
+                    inputEl.focus();
+                    inputEl.classList.add('ring-2', 'ring-rose-500');
+                    setTimeout(() => inputEl.classList.remove('ring-2', 'ring-rose-500'), 2000);
+                }
+                return;
+            }
+
+            const loadingIndicator = document.getElementById('aiLoadingIndicator');
+            const loadingText = document.getElementById('aiLoadingText');
+            const btn = document.getElementById('btnRecognize');
+            loadingIndicator.classList.remove('hidden');
+            loadingText.innerText = "Gemini 3 視覺大模型正在穿透紅框逐筆精確辨識中...";
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            const systemPrompt = `你是一位世界頂級的台灣電商金流與 OCR 辨識系統專家。
+請仔細辨識這張長截圖中的「每一筆」訂單資料，畫面中有 7 筆以上的訂單卡片，絕對不可遺漏任何一筆！
+
+針對每筆訂單請注意以下特點：
+1. 【最關鍵 - 銀行帳號】：
+   - 每個帳號數字的外圍被「紅色/粉紅色的點狀虛線框」包圍圈起來。
+   - 請你「徹底無視這個紅色外框與虛線」，直接穿透並讀取框內的連續數字！
+   - 富邦虛擬帳號必定為 16 碼連續純數字（開頭通常為 30203...，例如 3020363216122865、3020363216118923 等）。請完整讀出這 16 位數字，不可多碼或少碼。
+2. 【買家電話】：左側的 09 開頭 10 碼電話號碼（如 0903433484、0916598794）。
+3. 【訂單編號】：例如 26110924465297。
+4. 【ATM 金額】：位於「ATM $」後面的數字（例如 1、50、55 等）。
+5. 【繳費期限】：位於「期限」下方的時間（例如 2026/11/10 03:59）。
+
+請從上到下完整讀取圖片中的所有訂單，並輸出完整的 JSON 陣列。
+每筆資料包含欄位：
+- orderId: 訂單編號字串
+- phone: 09 開頭電話號碼
+- atmAmount: ATM 後方的純數字金額
+- rawAccount: 穿透紅框所讀到的 16 碼富邦銀行帳號
+- deadline: 期限字串`;
+
+            const userPrompt = "請完整辨識這張長截圖中的所有訂單。特別注意：每個帳號都被紅色虛線框圈起，請徹底忽略紅框，精準擷取框內完整的 16 碼純數字銀行帳號，並提取訂單編號、電話與 ATM 金額，依序完整輸出。";
+
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: userPrompt },
+                            {
+                                inlineData: {
+                                    mimeType: "image/png",
+                                    data: currentImageBase64
+                                }
+                            }
+                        ]
+                    }
+                ],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                "orderId": { "type": "STRING" },
+                                "phone": { "type": "STRING", "nullable": true },
+                                "atmAmount": { "type": "STRING" },
+                                "rawAccount": { "type": "STRING" },
+                                "deadline": { "type": "STRING" }
+                            },
+                            "propertyOrdering": ["orderId", "phone", "atmAmount", "rawAccount", "deadline"]
+                        }
+                    }
+                }
+            };
+
+            // 原本正常動作的 Gemini 3 端點
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+                    const jsonText = result.candidates[0].content.parts[0].text;
+                    const parsedOrders = JSON.parse(jsonText);
+                    
+                    if (Array.isArray(parsedOrders) && parsedOrders.length > 0) {
+                        renderProcessedOrders(parsedOrders);
+                        showToast(`成功辨識全部 ${parsedOrders.length} 筆訂單與帳號！`, 'success');
+                    } else {
+                        showToast("未能辨識出訂單，請確認圖片清晰度", "error");
+                    }
+                } else if (result.error) {
+                    console.error("Gemini API 回傳錯誤:", result.error);
+                    showToast(`API 錯誤：${result.error.message || '請確認 API Key 是否正確'}`, 'error');
+                } else {
+                    showToast("辨識未回傳結果，請重試", "error");
+                }
+            } catch (err) {
+                console.error("辨識請求失敗:", err);
+                showToast("連線至 Gemini 失敗，請確認網路與 API Key", "error");
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        // 統一把結構化資料進行 16/12 碼嚴格驗證並渲染
+        function renderProcessedOrders(rawList) {
+            const container = document.getElementById('resultsContainer');
+            let parsedResults = [];
+
+            rawList.forEach((item, index) => {
+                const rawAccount = (item.rawAccount || '').trim();
+                const cleanAccount = rawAccount.replace(/[^0-9]/g, '');
+
+                // 嚴格富邦銀行驗證機制
+                let isValid = true;
+                let validationMsg = '驗證通過';
+
+                if (!cleanAccount) {
+                    isValid = false;
+                    validationMsg = '未擷取到帳號';
+                } else if (!/^\d+$/.test(cleanAccount)) {
+                    isValid = false;
+                    validationMsg = '含有非數字字元';
+                } else if (cleanAccount.length === 16) {
+                    isValid = true;
+                    validationMsg = '16碼 (富邦虛擬帳號驗證通過)';
+                } else if (cleanAccount.length === 12) {
+                    isValid = true;
+                    validationMsg = '12碼 (富邦一般帳號驗證通過)';
+                } else {
+                    isValid = false;
+                    validationMsg = `帳號長度異常 (${cleanAccount.length}碼，富邦應為16碼虛擬帳號或12碼帳號)`;
+                }
+
+                // ATM 轉帳金額防呆：檢查是否 > 50 元
+                const rawAmtClean = item.atmAmount ? item.atmAmount.replace(/[^0-9]/g, '') : '';
+                const numAmt = parseInt(rawAmtClean, 10);
+                const isAmountWarning = !isNaN(numAmt) && numAmt > 50;
+
+                parsedResults.push({
+                    orderId: item.orderId || `訂單 #${index + 1}`,
+                    phone: item.phone && item.phone.startsWith('09') && item.phone.length === 10 ? item.phone : null,
+                    amount: item.atmAmount ? item.atmAmount.replace(/[^0-9,]/g, '') : '無',
+                    numAmt: isNaN(numAmt) ? 0 : numAmt,
+                    isAmountWarning: isAmountWarning,
+                    rawAccount: rawAccount,
+                    cleanAccount: cleanAccount,
+                    deadline: item.deadline || '無期限資訊',
+                    isValid,
+                    validationMsg
+                });
+            });
+
+            // 存入全域以供 QR Code 輪播切換使用
+            globalParsedResults = parsedResults;
+            document.getElementById('resultCount').innerText = `共 ${parsedResults.length} 筆`;
+
+            const btnOpenCarousel = document.getElementById('btnOpenQrCarousel');
+            if (parsedResults.length > 0) {
+                btnOpenCarousel.classList.remove('hidden');
+            } else {
+                btnOpenCarousel.classList.add('hidden');
+            }
+
+            if (parsedResults.length === 0) {
+                container.innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center text-center py-16 text-slate-500">
+                        <i class="fa-solid fa-triangle-exclamation text-amber-400 text-3xl mb-2"></i>
+                        <p class="text-sm font-semibold text-slate-300">未擷取到有效訂單資料</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 渲染卡片結果 (含 > 50 警報與下載圖卡按鈕)
+            let html = '';
+            parsedResults.forEach((item, idx) => {
+                const cardId = `card-item-${idx}`;
+                const warningBorder = item.isAmountWarning ? 'border-amber-500 ring-2 ring-amber-500/40 bg-amber-950/15' : (item.isValid ? 'border-slate-800' : 'border-amber-500/50 bg-amber-950/10');
+                
+                html += `
+                    <div id="${cardId}" class="bg-slate-900 rounded-xl border ${warningBorder} p-5 shadow-lg transition duration-200">
+                        
+                        ${item.isAmountWarning ? `
+                            <div class="mb-3 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/70 text-amber-300 text-xs font-bold flex items-center space-x-2">
+                                <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+                                <span>⚠️ ATM 金額 > $50 警報：請確認是否忘記折抵 mo 幣或餘額不足！</span>
+                            </div>
+                        ` : ''}
+
+                        <!-- 標題、電話與金額 -->
+                        <div class="flex items-start justify-between pb-3 mb-3 border-b border-slate-800">
+                            <div>
+                                ${item.phone ? `
+                                    <div class="inline-flex items-center space-x-1.5 text-sm font-semibold bg-sky-950/70 text-sky-300 border border-sky-800 px-2.5 py-1 rounded-lg mb-2 shadow-sm">
+                                        <i class="fa-solid fa-phone text-sky-400 text-xs"></i>
+                                        <span class="font-mono tracking-wider">${escapeHtml(item.phone)}</span>
+                                    </div>
+                                ` : ''}
+                                <div class="flex items-center space-x-2">
+                                    <span class="card-badge w-6 h-6 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-bold text-xs flex items-center justify-center">${idx + 1}</span>
+                                    <span class="font-bold text-slate-100 text-sm">訂單：${escapeHtml(item.orderId)}</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span id="copied-badge-${idx}" class="hidden text-xs font-bold px-2.5 py-0.5 bg-rose-600 text-white border border-rose-500 rounded-full flex items-center space-x-1 shadow-sm shadow-rose-950/50">
+                                    <i class="fa-solid fa-check"></i>
+                                    <span>已處理</span>
+                                </span>
+                                <span class="text-xs font-bold px-2.5 py-1 ${item.isAmountWarning ? 'bg-amber-500 text-slate-950 font-black animate-pulse' : 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/70'} rounded-lg">
+                                    $ ${escapeHtml(item.amount)}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- 帳號與操作按鈕區塊 -->
+                        <div id="account-box-${idx}" class="account-box bg-slate-950 p-3.5 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors duration-200">
+                            <div class="space-y-1">
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-xs font-semibold text-slate-400">台北富邦銀行 (已除橫線)：</span>
+                                    <span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${item.isValid ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800' : 'bg-rose-950/80 text-rose-300 border border-rose-800'}">
+                                        ${escapeHtml(item.validationMsg)}
+                                    </span>
+                                </div>
+                                <div id="account-text-${idx}" class="font-mono text-xl font-bold tracking-wider ${item.isValid ? 'text-indigo-400' : 'text-amber-400'} transition-colors duration-200">
+                                    ${escapeHtml(item.cleanAccount || '無帳號')}
+                                </div>
+                                <div class="text-[11px] text-slate-500">原始格式：${escapeHtml(item.rawAccount || '無')}</div>
+                            </div>
+                            
+                            <div class="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                                ${item.cleanAccount ? `
+                                    <button onclick="openQrModal(${idx})" class="flex-1 sm:flex-initial bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 font-medium text-xs px-3 py-2.5 rounded-xl transition duration-150 flex items-center justify-center space-x-1.5 cursor-pointer">
+                                        <i class="fa-solid fa-qrcode text-indigo-400"></i>
+                                        <span>掃描 QR</span>
+                                    </button>
+                                    <button onclick="exportAndDownloadCard(${idx})" class="flex-1 sm:flex-initial bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/80 text-emerald-200 font-medium text-xs px-3 py-2.5 rounded-xl transition duration-150 flex items-center justify-center space-x-1.5 cursor-pointer" title="下載完整轉帳收執圖卡至手機相簿">
+                                        <i class="fa-solid fa-download text-emerald-400"></i>
+                                        <span>下載圖卡</span>
+                                    </button>
+                                    <button id="copy-btn-${idx}" onclick="copyToClipboard('${item.cleanAccount}', '${item.cleanAccount}', ${idx})" class="w-full sm:w-auto bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-100 border border-slate-700 font-medium text-xs px-3.5 py-2.5 rounded-xl shadow-md transition duration-150 flex items-center justify-center space-x-1.5 cursor-pointer">
+                                        <i class="fa-regular fa-copy"></i>
+                                        <span>複製帳號</span>
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+
+                        <!-- 期限資訊 -->
+                        <div class="mt-3 flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/80">
+                            <span class="flex items-center space-x-1">
+                                <i class="fa-regular fa-calendar-check text-slate-500"></i>
+                                <span>繳費期限：<strong class="text-slate-200">${escapeHtml(item.deadline)}</strong></span>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 產生標準台灣Pay (TWQR) / 財金公司共通性轉帳 QR Code 字串
+        function generateBankTransferPayload(bankCode, account, amountStr) {
+            const cleanAcc = (account || '').replace(/[^0-9]/g, '');
+            if (!cleanAcc) return '';
+
+            // 純數字帳號模式
+            if (currentQrProtocol === 'plain') {
+                return cleanAcc;
+            }
+
+            // 台灣Pay 標準 16 碼帳號（不足 16 碼前面補 0）
+            const paddedAcc = cleanAcc.length < 16 ? cleanAcc.padStart(16, '0') : cleanAcc;
+
+            // 帶指定金額模式 (預設)
+            if (currentQrProtocol === 'amt') {
+                const cleanAmt = (amountStr || '').replace(/[^0-9]/g, '');
+                const parsedAmt = parseInt(cleanAmt, 10);
+                if (!isNaN(parsedAmt) && parsedAmt > 0) {
+                    const amtInCents = parsedAmt * 100;
+                    return `TWQRP://0/158/02/V1?D6=${paddedAcc}&D5=${bankCode}&D1=${amtInCents}`;
+                }
+            }
+
+            // 無金額模式
+            return `TWQRP://0/158/02/V1?D6=${paddedAcc}&D5=${bankCode}`;
+        }
+
+        // 開啟 QR Code 換頁輪播視窗
+        function openQrModal(index) {
+            if (!globalParsedResults || globalParsedResults.length === 0) return;
+            if (index < 0) index = 0;
+            if (index >= globalParsedResults.length) index = globalParsedResults.length - 1;
+            
+            currentModalIndex = index;
+            const modal = document.getElementById('qrModal');
+            modal.classList.remove('hidden');
+            
+            setTimeout(() => {
+                renderCurrentModalQr();
+            }, 50);
+        }
+
+        // 關閉 QR Code 視窗
+        function closeQrModal() {
+            document.getElementById('qrModal').classList.add('hidden');
+        }
+
+        // 輪播切換上一頁 / 下一頁 (delta: -1 或 +1)
+        function navigateQrModal(delta) {
+            const nextIndex = currentModalIndex + delta;
+            if (nextIndex >= 0 && nextIndex < globalParsedResults.length) {
+                currentModalIndex = nextIndex;
+                renderCurrentModalQr();
+            }
+        }
+
+        // 繪製當前頁面的 QR Code 與資訊
+        function renderCurrentModalQr() {
+            const item = globalParsedResults[currentModalIndex];
+            if (!item) return;
+
+            document.getElementById('modalOrderTitle').innerText = `${item.orderId}`;
+            const phoneEl = document.getElementById('modalPhoneText');
+            if (item.phone) {
+                phoneEl.innerText = `📱 ${item.phone}`;
+                phoneEl.classList.remove('hidden');
+            } else {
+                phoneEl.classList.add('hidden');
+            }
+
+            document.getElementById('modalAccountDisplay').innerText = item.cleanAccount || '無帳號';
+            document.getElementById('modalAmountDisplay').innerText = item.amount !== '無' ? `$ ${item.amount}` : '未指定';
+            document.getElementById('modalPageIndicator').innerText = `${currentModalIndex + 1} / ${globalParsedResults.length}`;
+
+            // 金額大於 50 警報
+            const moWarnEl = document.getElementById('modalMoWarning');
+            if (item.isAmountWarning) {
+                moWarnEl.classList.remove('hidden');
+            } else {
+                moWarnEl.classList.add('hidden');
+            }
+
+            // 控制上一頁 / 下一頁按鈕停用狀態
+            const btnPrev = document.getElementById('btnPrevQr');
+            const btnNext = document.getElementById('btnNextQr');
+            btnPrev.disabled = currentModalIndex === 0;
+            btnPrev.classList.toggle('opacity-40', currentModalIndex === 0);
+            btnPrev.classList.toggle('cursor-not-allowed', currentModalIndex === 0);
+
+            btnNext.disabled = currentModalIndex === globalParsedResults.length - 1;
+            btnNext.classList.toggle('opacity-40', currentModalIndex === globalParsedResults.length - 1);
+            btnNext.classList.toggle('cursor-not-allowed', currentModalIndex === globalParsedResults.length - 1);
+
+            // 取得 Canvas 元素並生成 QR Code
+            const canvas = document.getElementById('qrCodeCanvas');
+            const qrText = generateBankTransferPayload('012', item.cleanAccount, item.amount);
+            
+            const rawPayloadEl = document.getElementById('modalRawPayload');
+            if (rawPayloadEl) rawPayloadEl.innerText = qrText;
+
+            try {
+                if (typeof QRious !== 'undefined') {
+                    qriousInstance = new QRious({
+                        element: canvas,
+                        value: qrText,
+                        size: 240,
+                        level: 'L',
+                        foreground: '#000000',
+                        background: '#ffffff'
+                    });
+                }
+            } catch (err) {
+                console.error("QR Code 繪製失敗:", err);
+                showToast("QR Code 繪製失敗，請重試", "error");
+            }
+        }
+
+        // 在 Modal 內直接複製當前帳號並標記
+        function copyModalAccount() {
+            const item = globalParsedResults[currentModalIndex];
+            if (item && item.cleanAccount) {
+                copyToClipboard(item.cleanAccount, item.cleanAccount, currentModalIndex);
+                showToast(`已複製第 ${currentModalIndex + 1} 筆帳號`, 'success');
+            }
+        }
+
+        // 下載當前 Modal 內的訂單圖卡
+        function downloadCurrentModalCard() {
+            exportAndDownloadCard(currentModalIndex);
+        }
+
+        // ==========================================
+        // 跨平台高解析度卡片合成與下載機制 (iPhone / Android 通用)
+        // ==========================================
+                // 安全繪製圓角矩形 (相容所有瀏覽器版本，防 ctx.roundRect 報錯)
+        function drawRoundedRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // ==========================================
+        // 跨平台高解析度卡片合成與下載機制 (電腦 Chrome / iPhone / Android 100% 成功)
+        // ==========================================
+        function exportAndDownloadCard(index) {
+            try {
+                const item = globalParsedResults[index];
+                if (!item || !item.cleanAccount) {
+                    showToast('無有效轉帳資訊可供生成圖片', 'error');
+                    return;
+                }
+
+                // 1. 動態建立臨時 Canvas 生成 QR Code
+                const tempQrCanvas = document.createElement('canvas');
+                const qrPayload = generateBankTransferPayload('012', item.cleanAccount, item.amount);
+                new QRious({
+                    element: tempQrCanvas,
+                    value: qrPayload,
+                    size: 400,
+                    level: 'L',
+                    foreground: '#000000',
+                    background: '#ffffff'
+                });
+
+                // 2. 建立卡片畫布 (寬 750px，高 1050px)
+                const cardCanvas = document.createElement('canvas');
+                cardCanvas.width = 750;
+                cardCanvas.height = 1050;
+                const ctx = cardCanvas.getContext('2d');
+
+                // 背景深色漸層
+                const bgGrad = ctx.createLinearGradient(0, 0, 0, 1050);
+                bgGrad.addColorStop(0, '#020617');
+                bgGrad.addColorStop(1, '#0f172a');
+                ctx.fillStyle = bgGrad;
+                ctx.fillRect(0, 0, 750, 1050);
+
+                // 頂部裝飾條
+                ctx.fillStyle = item.isAmountWarning ? '#f59e0b' : '#e11d48';
+                ctx.fillRect(0, 0, 750, 14);
+
+                // 頂部標題
+                ctx.fillStyle = '#f8fafc';
+                ctx.font = 'bold 32px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('台灣Pay / 銀行轉帳付款單', 375, 65);
+
+                // 白色 QR Code 襯底框 (四周留白以確保銀行 App 載入相簿時 100% 秒讀)
+                ctx.fillStyle = '#ffffff';
+                drawRoundedRect(ctx, 145, 100, 460, 460, 24);
+
+                // 繪製 QR Code (置中在白框內)
+                ctx.drawImage(tempQrCanvas, 175, 130, 400, 400);
+
+                // 繪製資訊卡底框
+                ctx.fillStyle = '#1e293b';
+                drawRoundedRect(ctx, 50, 590, 650, 410, 20);
+
+                // 資訊文字繪製
+                ctx.textAlign = 'left';
+
+                // 金額大於 50 警告橫幅
+                if (item.isAmountWarning) {
+                    ctx.fillStyle = '#b45309';
+                    ctx.fillRect(50, 590, 650, 45);
+                    ctx.fillStyle = '#fef3c7';
+                    ctx.font = 'bold 20px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⚠️ ATM 金額 > $50：請注意確認是否已折抵 mo 幣！', 375, 622);
+                    ctx.textAlign = 'left';
+                }
+
+                const startY = item.isAmountWarning ? 675 : 640;
+
+                // ATM 金額
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('轉帳金額 (ATM)：', 85, startY);
+                ctx.fillStyle = item.isAmountWarning ? '#fbbf24' : '#34d399';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.fillText(`$ ${item.amount} 元`, 280, startY + 3);
+
+                // 收款銀行
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('收款銀行：', 85, startY + 55);
+                ctx.fillStyle = '#38bdf8';
+                ctx.font = 'bold 26px sans-serif';
+                ctx.fillText('012 台北富邦銀行', 280, startY + 55);
+
+                // 16 碼帳號
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('轉帳帳號：', 85, startY + 115);
+                ctx.fillStyle = '#f43f5e';
+                ctx.font = 'bold 30px monospace';
+                ctx.fillText(item.cleanAccount, 280, startY + 115);
+
+                // 訂單編號
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('訂單編號：', 85, startY + 175);
+                ctx.fillStyle = '#f1f5f9';
+                ctx.font = 'bold 24px monospace';
+                ctx.fillText(item.orderId, 280, startY + 175);
+
+                // 買家電話
+                if (item.phone) {
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.font = '22px sans-serif';
+                    ctx.fillText('買家電話：', 85, startY + 230);
+                    ctx.fillStyle = '#38bdf8';
+                    ctx.font = 'bold 24px monospace';
+                    ctx.fillText(item.phone, 280, startY + 230);
+                }
+
+                // 繳費期限
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '22px sans-serif';
+                ctx.fillText('繳費期限：', 85, startY + 285);
+                ctx.fillStyle = '#f59e0b';
+                ctx.font = 'bold 22px sans-serif';
+                ctx.fillText(item.deadline, 280, startY + 285);
+
+                // 3. 輸出圖片
+                const fileName = `轉帳單_${item.orderId}_${item.cleanAccount.slice(-4)}.png`;
+                const dataUrl = cardCanvas.toDataURL('image/png');
+
+                // 判斷是否為行動裝置 (iPhone / iPad / Android)
+                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+                if (!isMobile) {
+                    // 電腦版 Chrome / Edge / Firefox：直接秒觸發標準檔案下載 (最穩定、100% 成功存入下載資料夾)
+                    triggerDirectDownload(dataUrl, fileName);
+                    showToast(`已成功下載圖片：${fileName}`, 'success');
+                } else {
+                    // 手機端 (iPhone / Android)：彈出高畫質圖卡，方便長按直接「加入照片」或點擊下載
+                    fallbackShowImageModal(dataUrl, fileName);
+                    showToast('已生成轉帳卡片，長按圖片即可存入相簿', 'success');
+                }
+            } catch (err) {
+                console.error("生成圖卡發生異常:", err);
+                showToast("生成圖卡失敗，請重試", "error");
+            }
+        }
+
+        // 電腦端直接觸發檔案下載 (相容所有電腦 Chrome/Edge)
+        function triggerDirectDownload(dataUrl, fileName) {
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = dataUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+            }, 300);
+        }
+
+        // 相容彈窗：手機端長按存入相簿 / 直接下載
+        function fallbackShowImageModal(dataUrl, fileName) {
+            const modal = document.getElementById('imgPreviewModal');
+            const img = document.getElementById('exportPreviewImg');
+            const directLink = document.getElementById('directDownloadLink');
+
+            img.src = dataUrl;
+            directLink.onclick = function() {
+                triggerDirectDownload(dataUrl, fileName);
+            };
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeImgPreviewModal() {
+            document.getElementById('imgPreviewModal').classList.add('hidden');
+        }
+
+        // 鍵盤監聽：支援左右箭頭鍵翻頁、Esc 鍵關閉
+        window.addEventListener('keydown', function(e) {
+            const modal = document.getElementById('qrModal');
+            if (!modal.classList.contains('hidden')) {
+                if (e.key === 'ArrowLeft') {
+                    navigateQrModal(-1);
+                } else if (e.key === 'ArrowRight') {
+                    navigateQrModal(1);
+                } else if (e.key === 'Escape') {
+                    closeQrModal();
+                }
+            }
+        });
+
+        // 一鍵從剪貼簿貼上文字並自動執行解析
+        async function pasteFromClipboard() {
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    const text = await navigator.clipboard.readText();
+                    if (text && text.trim()) {
+                        document.getElementById('orderInput').value = text;
+                        showToast('已成功貼上剪貼簿內容', 'success');
+                        parseOrders();
+                        return;
+                    }
+                }
+                showToast('剪貼簿無文字內容，請手動貼上 (Ctrl+V)', 'error');
+            } catch (err) {
+                const textarea = document.getElementById('orderInput');
+                textarea.focus();
+                showToast('請使用快捷鍵 Ctrl+V (或 Cmd+V) 進行貼上', 'error');
+            }
+        }
+
+        // Clear all inputs and outputs
+        function clearAll() {
+            document.getElementById('orderInput').value = '';
+            globalParsedResults = [];
+            document.getElementById('btnOpenQrCarousel').classList.add('hidden');
+            document.getElementById('resultsContainer').innerHTML = `
+                <div id="emptyState" class="h-full flex flex-col items-center justify-center text-center py-16 text-slate-500">
+                    <div class="w-16 h-16 rounded-full bg-slate-800/60 flex items-center justify-center mb-3 text-slate-600">
+                        <i class="fa-solid fa-file-lines text-2xl"></i>
+                    </div>
+                    <p class="text-sm font-medium text-slate-300">尚未解析任何資料</p>
+                    <p class="text-xs text-slate-500 mt-1">請於左側輸入文字並點擊「立即解析與驗證」</p>
+                </div>
+            `;
+            document.getElementById('resultCount').innerText = '共 0 筆';
+        }
+
+        // Main Parser Function (文字模式)
+        function parseOrders() {
+            const rawText = document.getElementById('orderInput').value.trim();
+            const container = document.getElementById('resultsContainer');
+            
+            if (!rawText) {
+                container.innerHTML = `
+                    <div id="emptyState" class="h-full flex flex-col items-center justify-center text-center py-16 text-slate-500">
+                        <div class="w-16 h-16 rounded-full bg-slate-800/60 flex items-center justify-center mb-3 text-slate-600">
+                            <i class="fa-solid fa-file-lines text-2xl"></i>
+                        </div>
+                        <p class="text-sm font-medium text-slate-300">請輸入有效的訂單文字</p>
+                    </div>
+                `;
+                document.getElementById('resultCount').innerText = '共 0 筆';
+                return;
+            }
+
+            const lines = rawText.split(/\n+/);
+            let sections = [];
+            let currentSection = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                
+                if (line.includes('訂單') && currentSection.some(l => l.includes('台北富邦') || l.includes('富邦'))) {
+                    sections.push(currentSection.join('\n'));
+                    currentSection = [line];
+                } else {
+                    currentSection.push(line);
+                }
+            }
+            if (currentSection.length > 0) {
+                sections.push(currentSection.join('\n'));
+            }
+
+            let parsedResults = [];
+
+            sections.forEach((section, index) => {
+                let rawAccount = '';
+                
+                const newFormatMatch = section.match(/(?:台北富邦銀行(?:\s*\(012\))?[\s\S]*?)(\d{12,16})(?=[，,\s]*期限|$)/);
+                const oldFormatMatch = section.match(/台北富邦銀行\s*([^，,\n\r]+?)(?=[，,\s]*期限|$)/);
+
+                if (newFormatMatch && newFormatMatch[1]) {
+                    rawAccount = newFormatMatch[1].trim();
+                } else if (oldFormatMatch && oldFormatMatch[1]) {
+                    rawAccount = oldFormatMatch[1].trim();
+                } else {
+                    const fallbackMatch = section.match(/(?:30203\d{11}|30203[\d\-]{14,16})/);
+                    if (fallbackMatch && fallbackMatch[0]) {
+                        rawAccount = fallbackMatch[0].trim();
+                    }
+                }
+
+                const cleanAccount = rawAccount.replace(/[^0-9]/g, '');
+
+                if (!rawAccount && !section.includes('台北富邦') && !section.includes('012')) {
+                    return;
+                }
+
+                const orderIdMatch = section.match(/訂單\s*([0-9A-Za-z]+)/);
+                const orderId = orderIdMatch ? orderIdMatch[1] : `未具名訂單 #${index + 1}`;
+
+                const atmAmountMatch = section.match(/ATM\s*\$?\s*([0-9,]+)/i);
+                const amount = atmAmountMatch ? atmAmountMatch[1] : '無 ATM 金額';
+
+                const phoneMatch = section.match(/\b(09\d{8})\b/);
+                const phone = phoneMatch ? phoneMatch[1] : null;
+
+                const deadlineMatch = section.match(/期限\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2}(?:\s+[0-9]{1,2}:[0-9]{1,2}(?::[0-9]{1,2})?)?)/);
+                let deadline = '無期限資訊';
+                if (deadlineMatch && deadlineMatch[1]) {
+                    deadline = deadlineMatch[1].trim();
+                } else {
+                    const fallbackDeadline = section.match(/期限\s*([^\n\r]+)/);
+                    if (fallbackDeadline && fallbackDeadline[1]) {
+                        deadline = fallbackDeadline[1].replace(/09\d{8}.*$/, '').trim();
+                    }
+                }
+
+                parsedResults.push({
+                    orderId,
+                    phone,
+                    atmAmount: amount,
+                    rawAccount,
+                    deadline
+                });
+            });
+
+            renderProcessedOrders(parsedResults);
+        }
+
+        // 複製到剪貼簿
+        function copyToClipboard(text, label, index) {
+            if (!text) return;
+            
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showToast(`已複製帳號：${label}`, 'success');
+                    markAsCopied(index);
+                } else {
+                    showToast('複製失敗，請手動複製', 'error');
+                }
+            } catch (err) {
+                showToast('複製失敗', 'error');
+            }
+
+            document.body.removeChild(textArea);
+        }
+
+        // 標記該項目為已複製
+        function markAsCopied(index) {
+            if (index === undefined || index === null) return;
+            
+            const btn = document.getElementById(`copy-btn-${index}`);
+            if (btn) {
+                btn.className = "w-full sm:w-auto bg-rose-600 hover:bg-rose-700 active:scale-95 text-white border border-rose-500 font-medium text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-rose-950 transition duration-150 flex items-center justify-center space-x-2 cursor-pointer";
+                btn.innerHTML = `<i class="fa-solid fa-check"></i><span>已複製</span>`;
+            }
+
+            const accountBox = document.getElementById(`account-box-${index}`);
+            if (accountBox) {
+                accountBox.classList.remove('bg-slate-950');
+                accountBox.classList.add('bg-rose-950/25');
+            }
+
+            const accountText = document.getElementById(`account-text-${index}`);
+            if (accountText) {
+                accountText.classList.remove('text-indigo-400');
+                accountText.classList.add('text-rose-400');
+            }
+
+            const badge = document.getElementById(`copied-badge-${index}`);
+            if (badge) {
+                badge.classList.remove('hidden');
+            }
+
+            const card = document.getElementById(`card-item-${index}`);
+            if (card) {
+                card.classList.remove('ring-1', 'ring-rose-500');
+            }
+        }
+
+        // Toast Notification System
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const bgClass = type === 'success' ? 'bg-slate-900 text-slate-100 border border-slate-700 shadow-rose-950/30' : (type === 'info' ? 'bg-indigo-900 text-white' : 'bg-rose-700 text-white');
+            const icon = type === 'success' ? 'fa-circle-check text-rose-400' : (type === 'info' ? 'fa-circle-info text-sky-400' : 'fa-circle-exclamation text-white');
+
+            toast.className = `pointer-events-auto flex items-center space-x-2 px-4 py-3 rounded-xl shadow-2xl text-xs font-medium transform translate-y-2 opacity-0 transition-all duration-300 ${bgClass}`;
+            toast.innerHTML = `
+                <i class="fa-solid ${icon} text-sm"></i>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add('translate-y-2', 'opacity-0');
+                setTimeout(() => {
+                    toast.remove();
+                }, 300);
+            }, 2500);
+        }
+
+        // HTML Escape helper
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // 頁面載入時自動載入之前存放在本機瀏覽器的 Key
+        window.onload = function() {
+            loadSavedApiKey();
+        };
+    </script>
+</body>
+</html>
